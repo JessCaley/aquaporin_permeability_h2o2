@@ -1,0 +1,813 @@
+---
+title: "BIOL3208 Research project - Transport of H2O2 by candidate aquaporins and potential mechanisms regulation"
+output: html_document
+date: "2023-04-04"
+---
+
+# Libraries 
+```{r loadLibraries}
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tibble)
+library(gridExtra)
+library(knitr)
+# library(ggResidpanel)
+library(emmeans)
+
+library(GGally)
+```
+# Functions 
+This is a function to clean each of the data sets
+on tibble with sample as rows, and time as columns
+- Change the column names to match the time course 
+- change the type of sample_id to factor
+- change column names of pre
+- join the pre data set to the time course
+- change the type of data points to numeric
+- go from second column because the first column is the sample_id
+```{r cleanData}
+
+clean_the_data <- function(raw_tc,raw_pre) {
+  
+  colnames(raw_tc) <- c("sample_id", 1:(length(raw_tc[1,])-1) )
+  
+  raw_tc$sample_id %>% as.factor()
+  
+  colnames(raw_pre) <- c("sample_id", "pre_1", "pre_2") 
+ 
+  raw_tc <- full_join(raw_pre, raw_tc, by = "sample_id")
+
+  raw_tc[-1] <- mutate_if(raw_tc[-1], is.character, as.numeric)
+  raw_tc <- as.data.frame(raw_tc, row.names = raw_tc[1])
+  
+  return(raw_tc)
+}
+
+```
+
+Function to calculate difference between the averages of each genotype under specific H2O2 condition
+e.g. for the EV with H2O2, would calculate the difference between average with vs without dye
+
+ want to ignore sample_id column
+ need to alternate between average 3 rows and 2 rows
+ function will take in all 5 rows of a genotype of H2O2 condition, ie. first 3 rows with dye last 2 without
+
+```{r avH2O2Function}
+
+fun_av_geno <- function(geno_h2o2) {
+  dye <- geno_h2o2[1:3,]
+  no_dye <- geno_h2o2[4:5,]
+  
+  av_dye <- colMeans(dye[,-1]) 
+  av_no_dye <- colMeans(no_dye[,-1]) 
+  
+  return(av_dye - av_no_dye)
+}
+```
+
+
+
+# Experiment 2 2023/04/06
+Ran for 60 minutes
+using EV 527 TIP1;1 TIP1;2 TIP2;1 EV 515 TIP2;3
+
+What the sample id means
+
+A: EV
+B: TIP1;1
+C: TIP1;2
+D: TIP;1
+E: EVhis
+F: TIP2;3
+
+1 2 3 : Water + dye
+4 5 : water - dye
+6 8 9 : H2O2 + dye
+10 11 : H2O2 + dye
+
+## Import data
+Read in the excel sheets
+Selecting the data, check its the same to excel sheet
+need to strip the column labels
+```{r exp2_2023_04_06_read}
+raw_path_2 <- "./data/H2DCFDA_20230406.xlsx"
+ex_sheets_2 <- excel_sheets(raw_path_2)
+
+raw_reads_pre_2 <- read_xlsx(raw_path_2, sheet = ex_sheets_2[2])
+raw_reads_time_course_2 <- read_xlsx(raw_path_2, sheet = ex_sheets_2[1])
+
+cycle_num_2 <- raw_reads_time_course_2[41,1:61]
+raw_pre_2 <- raw_reads_pre_2[44:103,1:3]
+raw_time_course_2 <- raw_reads_time_course_2[44:103,1:61]
+```
+
+Clean the data
+```{r exp2_2023_04_06_clean}
+data_2 <- clean_the_data(raw_time_course_2, raw_pre_2)
+```
+
+## Calculate the averages for each genotype
+Standardise to average of each genotype without H2O2 added
+Create data frame with genotypes as column names and time as rows
+Add column for time
+```{r exp2_2023_04_06_tidy}
+av_geno_2 <- data.frame(EMPTY_527  = fun_av_geno(data_2[6:10,]) - fun_av_geno(data_2[1:5,]), 
+                        EMPTY_515  = fun_av_geno(data_2[46:50,]) - fun_av_geno(data_2[41:45,]),
+                        TIP2_3 = fun_av_geno(data_2[56:60,]) - fun_av_geno(data_2[51:55,]),
+                        TIP1_1 = fun_av_geno(data_2[16:20,]) - fun_av_geno(data_2[11:15,]),
+                        TIP1_2 = fun_av_geno(data_2[26:30,]) - fun_av_geno(data_2[21:25,]),
+                        TIP2_1 = fun_av_geno(data_2[36:40,]) - fun_av_geno(data_2[31:35,]))
+time_2 <- c(0, 0 , 1:60)
+av_geno_2 <- av_geno_2 %>% 
+  cbind(time_2) %>%
+  as.data.frame()
+```
+
+## Restructure data into tidy data
+1 column for time_2
+1 column for genotype
+1 column for intensity
+```{r exp2_2023_04_06_tidy}
+av_geno_2_long <- av_geno_2 %>%
+  filter(time_2 > 0) %>%
+  pivot_longer(cols = 1:6, 
+               names_to = "genotype",
+               values_to = "intensity")
+
+glimpse(av_geno_2_long)
+```
+
+## Exploratory plot of data
+Look at intensity of genotypes over time, fit a line
+```{r exp2_2023_04_06_exploratory}
+# Plot Scatter 
+av_geno_2_long %>% 
+  ggplot(., aes(time_2, intensity, colour = genotype)) + 
+  geom_point(size = 1) + 
+  scale_fill_discrete(breaks = c( "EMPTY_515", " EMPTY_527", "TIP2_3", "TIP1_1", "TIP1_2", "TIP2_1"),
+                      labels = c("Empty.515", "Empty.527", "TIP2;3", "TIP1;1", "TIP1;2", "TIP2;1")) + 
+  xlab("Time (minutes)") + 
+  ylab("Relative fluorescent intensity") +
+  # ggtitle("Change in relative fluorescent intensity over time, with linear model overlayed ") +
+  theme_bw() +
+  geom_smooth(method = "lm") 
+
+ggsave('figures/H2DCFDA_intensity_by_time_exp1_TIPs.png', width = 6, height = 4)
+
+```
+
+
+## Fit a model to the data
+from the fit of the model, see a strong indication that there is an interaction between time_2 and genotypes
+```{r exp2_2023_04_06_model}
+lm2 <- lm(intensity ~ time_2 * genotype, data = av_geno_2_long)
+anova(lm2)
+```
+## Model assessment. 
+Looking at the variation of the residuals to the fitted model
+- Residuals vs fitted: see that the fitted model 
+- Normal QQ:
+- scale-location:
+- residuals vs location: there isn't a single data point that has more leverage on the data  
+
+```{r exp2_2023_04_06_model_assess}
+plot(lm2)
+```
+
+
+## Pairwise differences between slopes of model.
+Trends:
+- see the slope of each line fitted to each genotype
+Contrasts:
+- pairwise comparisons of the slope of each line
+```{r}
+emtrends(lm2, revpairwise~genotype, var = "time_2")
+```
+```{r}
+av_geno_2_long %>% 
+  filter(time_2 == 60) %>%   
+  ggplot(., aes(genotype, intensity, colour = genotype, fill = genotype)) + 
+  geom_col() + 
+  xlab("Genotype") + 
+  ggtitle("Intensity at 60 minutes")
+
+
+
+```
+
+
+# Experiment 3 2023/04/06 TIP2;3 mutants
+Ran for 56 minutes
+using EVura TIP2;3(WT) M1 M1 M3 M4 M5 M6
+
+A EV
+B WT
+C M1
+D M2 
+E M3 
+F M4
+G M5
+H M6
+
+## Import data
+Read in the excel sheets
+Selecting the data, check its the same to excel sheet
+need to strip the column labels
+```{r}
+raw_path_3 <- "./data/H2DCFDA_TIP2-3_mutants_20230406.xlsx"
+ex_sheets_3 <- excel_sheets(raw_path_3)
+raw_reads_pre_3 <- read_xlsx(raw_path_3, sheet = ex_sheets_3[2])
+raw_reads_time_course_3 <- read_xlsx(raw_path_3, sheet = ex_sheets_3[1])
+
+cycle_num_3 <- raw_reads_time_course_3[41,1:57] 
+raw_pre_3 <- raw_reads_pre_3[44:123,1:3]
+raw_time_course_3 <- raw_reads_time_course_3[44:123,1:57]
+```
+
+Clean the data
+Check the formatting is correct, column labels
+```{r}
+data_3 <- clean_the_data(raw_time_course_3, raw_pre_3)
+```
+
+## ## Calculate the averages for each genotype
+Standardise to average of each genotype without H2O2 added
+Create data frame with genotypes as column names and time as rows
+Add column for time
+```{r}
+av_geno_3 <- data.frame(EMPTY_527  = fun_av_geno(data_3[6:10,]) - fun_av_geno(data_3[1:5,]), 
+                        TIP2_3 = fun_av_geno(data_3[16:20,]) - fun_av_geno(data_3[11:15,]),
+                        S8_MIMIC = fun_av_geno(data_3[26:30,]) - fun_av_geno(data_3[21:25,]),
+                        S8_NULL = fun_av_geno(data_3[36:40,]) - fun_av_geno(data_3[31:35,]),
+                        S127_MIMIC = fun_av_geno(data_3[46:50,]) - fun_av_geno(data_3[41:45,]),
+                        S127_NULL = fun_av_geno(data_3[56:60,]) - fun_av_geno(data_3[51:55,]), 
+                        S8_S127_MIMIC = fun_av_geno(data_3[66:70,]) - fun_av_geno(data_3[61:65,]),
+                        S8_S127_NULL = fun_av_geno(data_3[76:80,]) - fun_av_geno(data_3[71:75,]))
+time_3 <- c(0, 0 , 1:56)
+av_geno_3 <- av_geno_3 %>% 
+  cbind(time_3) %>%
+  as.data.frame()
+```
+
+## Restructure data into tidy data
+1 column for time_2
+1 column for genotype
+1 column for intensity
+```{r}
+av_geno_3_long <- av_geno_3 %>%
+  filter(time_3 > 0) %>%
+  pivot_longer(cols = 1:8, 
+               names_to = "genotype",
+               values_to = "intensity")
+
+glimpse(av_geno_3_long)
+```
+## Exploratory plot of data
+Look at intensity of genotypes over time, fit a line
+```{r}
+av_geno_3_long %>% 
+  ggplot(., aes(time_3, intensity, colour = genotype)) + 
+  geom_point() + 
+  xlab("Time (minutes)") + 
+  geom_smooth(method = "lm") + 
+  ylab("Relative fluorescent intensity") +
+ # ggtitle("Change in relative fluorescent intensity over time, with linear model overlayed ") +
+  theme_bw() 
+ggsave('figures/H2DCFDA_linear_model_intensity_by_time_exp2_mutants.png', width = 6, height = 4)
+
+```
+## Fit a model to the data
+from the fit of the model, see a strong indication that there is an interaction between time_2 and genotypes
+```{r}
+lm3 <- aov(intensity ~ time_3 * genotype, av_geno_3_long)
+summary(lm3)
+```
+## Model assessment. 
+Looking at the variation of the residuals to the fitted model
+- Residuals vs fitted: 
+- Normal QQ:
+- scale-location:
+- residuals vs location: there isn't a data point that has more leverage on the data  
+
+```{r}
+plot(lm3)
+```
+
+
+## Pairwise differences between slopes of model.
+Trends:
+- see the slope of each line fitted to each genotype
+Contrasts:
+- pairwise comparisons of the slope of each line
+```{r}
+emtrends(lm3, revpairwise~genotype, var = "time_3")
+```
+
+
+
+# Experiment 4 2023/04/11 
+Ran for 60 minutes 
+using EVura TIP1;1 TIP1;2 TIP2;1 EVhis TIP2;3
+
+Old cultures 
+
+What the sample id means
+
+A: EV
+B: TIP1;1
+C: TIP1;2
+D: TIP;1
+E: EVhis
+F: TIP2;3
+
+1 2 3 : Water + dye
+4 5 : water - dye
+6 8 9 : H2O2 + dye
+10 11 : H2O2 + dye
+
+
+## Import data
+Read in the excel sheets
+Selecting the data, check its the same to excel sheet
+need to strip the column labels
+```{r}
+raw_path_4 <- "./data/H2DCFDA_20230411.xlsx"
+ex_sheets_4 <- excel_sheets(raw_path_4)
+
+raw_reads_pre_4 <- read_xlsx(raw_path_4, sheet = ex_sheets_4[2])
+raw_reads_time_course_4 <- read_xlsx(raw_path_4, sheet = ex_sheets_4[1])
+
+cycle_num_4 <- raw_reads_time_course_4[41,1:61]
+raw_pre_4 <- raw_reads_pre_4[44:103,1:3]
+raw_time_course_4 <- raw_reads_time_course_4[44:103,1:61]
+```
+
+Clean the data
+
+Using a slightly different function to restructure and format the data
+
+There's something wrong with the pre data, might have been saved wrong?
+This was the sample where it might not have had the correct setting loaded, because it was only meant to go for 2 but was going to go for 60
+might not have had the correct wells picked
+there's only 5 wells for each genotype instead of 10 will exclude pre data
+```{r}
+clean_the_data_4 <- function(raw_tc) {
+
+  colnames(raw_tc) <- c("sample_id", 1:(length(raw_tc[1,])-1) ) # -1 for the sample ID 
+ 
+  raw_tc$sample_id %>% as.factor()
+  raw_tc[-1] <- mutate_if(raw_tc[-1], is.character, as.numeric)
+  raw_tc <- as.data.frame(raw_tc, row.names = raw_tc[1]) 
+  
+  return(raw_tc)
+}
+
+data_4 <- clean_the_data_4(raw_time_course_4)
+```
+
+
+
+
+## Calculate the averages for each genotype
+Standardise to average of each genotype without H2O2 added
+Create data frame with genotypes as column names and time as rows
+Add column for time
+```{r}
+av_geno_4 <- data.frame(EMPTY_527  = fun_av_geno(data_4[6:10,]) - fun_av_geno(data_4[1:5,]), 
+                        EMPTY_515  = fun_av_geno(data_4[46:50,]) - fun_av_geno(data_4[41:45,]),
+                        TIP2_3 = fun_av_geno(data_4[56:60,]) - fun_av_geno(data_4[51:55,]),
+                        TIP1_1 = fun_av_geno(data_4[16:20,]) - fun_av_geno(data_4[11:15,]),
+                        TIP1_2 = fun_av_geno(data_4[26:30,]) - fun_av_geno(data_4[21:25,]),
+                        TIP2_1 = fun_av_geno(data_4[36:40,]) - fun_av_geno(data_4[31:35,]))
+time_4 <- c(1:60)
+av_geno_4 <- av_geno_4 %>% 
+  cbind(time_4) %>%
+  as.data.frame()
+```
+
+## Restructure data into tidy data
+1 column for time_2, only looking at time points from 1 minutes onwards 
+1 column for genotype
+1 column for intensity
+```{r exp1_2023_04_06_tidy}
+av_geno_4_long <- av_geno_4 %>%
+  filter(time_4 > 0) %>%
+  pivot_longer(cols = 1:6, 
+               names_to = "genotype",
+               values_to = "intensity")
+
+glimpse(av_geno_4_long)
+```
+
+
+## Exploratory plot of data
+Look at intensity of genotypes over time, fit a line
+```{r}
+av_geno_4_long %>% 
+  ggplot(., aes(time_4, intensity, colour = genotype)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  xlab("Time (minutes)") + 
+  ylab("Relative fluorescent intensity") +
+ # ggtitle("Change in relative fluorescent intensity over time, with linear model overlayed ") +
+  theme_bw() 
+ggsave('figures/H2DCFDA_intensity_by_time_exp4_TIPs.png', width = 6, height = 4)
+
+```
+
+
+## Fit a model to the data
+from the fit of the model, see a strong indication that there is an interaction between time_2 and genotypes
+```{r}
+lm4 <- lm(intensity ~ time_4 * genotype, data = av_geno_4_long)
+anova(lm4)
+```
+## Model assessment. 
+Looking at the variation of the residuals to the fitted model
+- Residuals vs fitted: see that the fitted model 
+- Normal QQ:
+- scale-location:
+- residuals vs location: there isn't a single data point that has more leverage on the data  
+
+```{r}
+plot(lm4)
+```
+
+
+## Pairwise differences between slopes of model.
+Trends:
+- see the slope of each line fitted to each genotype
+Contrasts:
+- pairwise comparisons of the slope of each line
+```{r}
+emtrends(lm4, revpairwise~genotype, var = "time_4")
+```
+
+
+
+# Experiment 5 2023/04/11 TIP2;3 mutants
+Ran for 60 minutes
+using EVura TIP2;3(WT) M1 M1 M3 M4 M5 M6
+
+Experiment used old cultures, old cultures generally do not grow well and we see that in the results
+
+A EV
+B WT
+C M1
+D M2 
+E M3 
+F M4
+G M5
+H M6
+
+## Import data
+Read in the excel sheets
+Selecting the data, check its the same to excel sheet
+need to strip the column labels
+```{r}
+raw_path_5 <- "./data/H2DCFDA_TIP2-3_mutants_20230411.xlsx"
+ex_sheets_5 <- excel_sheets(raw_path_5)
+raw_reads_pre_5 <- read_xlsx(raw_path_5, sheet = ex_sheets_5[2])
+raw_reads_time_course_5 <- read_xlsx(raw_path_5, sheet = ex_sheets_5[1])
+
+
+cycle_num_5 <- raw_reads_time_course_5[41,1:61]
+raw_pre_5 <- raw_reads_pre_5[44:123,1:3]
+raw_time_course_5 <- raw_reads_time_course_5[44:123,1:61]
+```
+
+
+Clean the data
+Check the formatting is correct, column labels
+```{r}
+data_5 <- clean_the_data(raw_time_course_5, raw_pre_5)
+```
+
+## ## Calculate the averages for each genotype
+Standardise to average of each genotype without H2O2 added
+Create data frame with genotypes as column names and time as rows
+Add column for time
+```{r}
+av_geno_5 <- data.frame(EMPTY_527  = fun_av_geno(data_5[6:10,]) - fun_av_geno(data_5[1:5,]), 
+                        TIP2_3 = fun_av_geno(data_5[16:20,]) - fun_av_geno(data_5[11:15,]),
+                        S8_MIMIC = fun_av_geno(data_5[26:30,]) - fun_av_geno(data_5[21:25,]),
+                        S8_NULL = fun_av_geno(data_5[36:40,]) - fun_av_geno(data_5[31:35,]),
+                        S127_MIMIC = fun_av_geno(data_5[46:50,]) - fun_av_geno(data_5[41:45,]),
+                        S127_NULL = fun_av_geno(data_5[56:60,]) - fun_av_geno(data_5[51:55,]), 
+                        S8_S127_MIMIC = fun_av_geno(data_5[66:70,]) - fun_av_geno(data_5[61:65,]),
+                        S8_S127_NULL = fun_av_geno(data_5[76:80,]) - fun_av_geno(data_5[71:75,]))
+time_5 <- c(0, 0 , 1:60)
+av_geno_5 <- av_geno_5 %>% 
+  cbind(time_5) %>%
+  as.data.frame()
+```
+
+
+## Restructure data into tidy data
+1 column for time_2
+1 column for genotype
+1 column for intensity
+```{r}
+av_geno_5_long <- av_geno_5 %>%
+  filter(time_5 > 0) %>%
+  pivot_longer(cols = 1:8, 
+               names_to = "genotype",
+               values_to = "intensity")
+
+glimpse(av_geno_5_long)
+```
+## Exploratory plot of data
+Look at intensity of genotypes over time, fit a line
+```{r}
+
+# Plot Scatter 
+av_geno_5 %>% tidyr::gather("genotype", "intensity", 1:8) %>% 
+  ggplot(., aes(time_5, intensity, colour = genotype)) + 
+  geom_point() + 
+  xlab("Time (minutes)") +
+  geom_smooth(method = "lm") + 
+  ylab("Relative fluorescent intensity") +
+ # ggtitle("Change in relative fluorescent intensity over time, with linear model overlayed ") +
+  theme_bw() 
+ggsave('figures/H2DCFDA_intensity_by_time_exp5_mutants.png', width = 6, height = 4)
+
+```
+
+## Fit a model to the data
+from the fit of the model, see no indication that there is an interaction between time_2 and genotypes
+```{r}
+lm5 <- aov(intensity ~ time_5 * genotype, av_geno_5_long)
+summary(lm5)
+```
+
+
+- Using old plates is not a viable method for future experiments
+  - We used week old streaked out plates (from glycerol), results were different, yeast did not grow 
+  - vs other experiments we used 2 day old plates, and culture that was picked the day before?
+
+
+# Experiment 6 2023/04/21 
+
+- issue with media likely, because not specific to person pipetting into wells, not specific to wells in plate so not an issue with the instrument, inconsistent with previous experiments, EV his(515) inconsistent with what it was compared to EV ura(527) before, getting such low values which were less than mocks without dye
+
+## Import data
+Read in the excel sheets
+Selecting the data, check its the same to excel sheet
+need to strip the column labels
+OVER indicates oversaturation of fluorescent intensity
+```{r}
+
+raw_path_6 <- "./data/H2DCFDA_20230421.xlsx"
+ex_sheets_6 <- excel_sheets(raw_path_6)
+
+raw_reads_pre_6 <- read_xlsx(raw_path_6, sheet = ex_sheets_6[2])
+raw_reads_time_course_6 <- read_xlsx(raw_path_6, sheet = ex_sheets_6[1])
+
+cycle_num_6 <- raw_reads_time_course_6[41,1:61] 
+raw_pre_6 <- raw_reads_pre_6[44:113,1:3]
+raw_time_course_6 <- raw_reads_time_course_6[44:113,1:61]
+```
+
+Clean the data
+Using a slightly different function to restructure and format the data
+data points with OVER when there was oversaturation become NA values - by coercion :)
+```{r}
+clean_the_data_6 <- function(raw_tc) {
+  
+  colnames(raw_tc) <- c("sample_id", 1:(length(raw_tc[1,])-1) )
+
+  raw_tc$sample_id %>% as.factor()
+
+  raw_tc[-1] <- mutate_if(raw_tc[-1], is.character, as.numeric)
+  raw_tc <- as.data.frame(raw_tc, row.names = raw_tc[1])
+  
+  return(raw_tc)
+}
+
+
+data_6 <- clean_the_data_6(raw_time_course_6)
+```
+
+
+## Calculate the averages for each genotype
+Standardise to average of each genotype without H2O2 added
+Create data frame with genotypes as column names and time as rows
+Add column for time
+```{r}
+av_geno_6 <- data.frame(EMPTY_527  = fun_av_geno(data_6[6:10,]) - fun_av_geno(data_6[1:5,]), 
+                        EMPTY_515  = fun_av_geno(data_6[46:50,]) - fun_av_geno(data_6[41:45,]),
+                        TIP2_3 = fun_av_geno(data_6[56:60,]) - fun_av_geno(data_6[51:55,]), 
+                        
+                        TIP1_1 = fun_av_geno(data_6[16:20,]) - fun_av_geno(data_6[11:15,]),
+                        TIP1_2 = fun_av_geno(data_6[26:30,]) - fun_av_geno(data_6[21:25,]),
+                        TIP2_1 = fun_av_geno(data_6[36:40,]) - fun_av_geno(data_6[31:35,]))
+time_6 <- c(1:60)
+av_geno_6 <- av_geno_6 %>% 
+  cbind(time_6) %>%
+  as.data.frame()
+```
+
+## Restructure data into tidy data
+1 column for time_2, only looking at time points from 1 minutes onwards 
+1 column for genotype
+1 column for intensity
+```{r}
+av_geno_6_long <- av_geno_6 %>%
+  filter(time_6 > 0) %>%
+  pivot_longer(cols = 1:6, 
+               names_to = "genotype",
+               values_to = "intensity")
+
+glimpse(av_geno_6_long)
+```
+
+
+## Exploratory plot of data
+Look at intensity of genotypes over time, fit a line
+```{r}
+
+av_geno_6_long %>% 
+  ggplot(., aes(time_6, intensity, colour = genotype)) + 
+  geom_point() + 
+  xlab("Time (minutes)") +
+  geom_smooth(method = "lm") +
+  ylab("Relative fluorescent intensity") +
+#  ggtitle("Change in relative fluorescent intensity over time, with linear model overlayed ") +
+  theme_bw() 
+ggsave('figures/H2DCFDA_linear_model_intensity_by_time_exp6_TIPs.png', width = 6, height = 4)
+
+
+
+
+
+
+av_geno_6_long %>% 
+  filter(time_6 < 7) %>% 
+  ggplot(., aes(time_6, intensity, colour = genotype)) + 
+  geom_point() + 
+  xlab("Time (minutes)") +
+  geom_smooth(method = "lm") +
+  ylab("Relative fluorescent intensity") +
+ # ggtitle("Relative fluorescent intensity over first 6 minutes, with linear model overlayed ") +
+  theme_bw() 
+ggsave('figures/H2DCFDA_linear_model_intensity_by_time_exp6_TIPs_6mins.png', width = 6, height = 4)
+
+```
+
+## Fit a model to the data
+from the fit of the model, see a strong indication that there is an interaction between time_2 and genotypes
+Only looking at first 6 minutes before over saturation 
+```{r}
+
+lm6 <- lm(intensity ~ time_6 * genotype, data = av_geno_6_long %>% filter(time_6 < 7))
+anova(lm6)
+```
+## Model assessment. 
+Looking at the variation of the residuals to the fitted model
+- Residuals vs fitted: see that the fitted model 
+- Normal QQ:
+- scale-location:
+- residuals vs location: there isn't a single data point that has more leverage on the data  
+
+```{r}
+plot(lm6)
+```
+
+
+## Pairwise differences between slopes of model.
+Trends:
+- see the slope of each line fitted to each genotype
+Contrasts:
+- pairwise comparisons of the slope of each line
+```{r}
+emtrends(lm6, revpairwise~genotype, var = "time_6")
+```
+
+
+
+
+
+
+
+## Looking at TIP2;3 mutants column 9 was consistently lower than the other replicates in the genotype and treatment
+
+
+# Experiment 7 - The Bin Plate
+- instrument failed to measure over the whole time course, instead only took two measurements after H2O2 was added
+- took plate out of bin after realising to take an end point measurement, was over an hour after H2O2 added
+- not viable results, as potential variance occuring from difference in temperature in plate reader to bin, also end time point is past all the other experiments
+- only looking at it for the sake of looking
+
+..._20230421 excel sheet
+- has 3 sheets, first is the failed time course, second is pre measurements
+
+..._20230421_1 excel sheet
+- has 2 sheets, first is post measurement 
+
+
+need to remove wells from column 9 on the plate? 
+but not all of them are lower? Yikes 
+filter(data_7, sample_id == "A9" | sample_id == "B9" | sample_id == "C9" | sample_id == "D9" |
+        sample_id == "E9" | sample_id == "F9" | sample_id == "G9" | sample_id == "H9")
+
+
+
+
+## Import data
+Read in the excel sheets, there are 3 from this experiment
+Selecting the data, check its the same to excel sheet
+need to strip the column labels
+```{r}
+raw_path_7 <- "./data/H2DCFDA_TIP2-3_mutants_20230421.xlsx"
+ex_sheets_7 <- excel_sheets(raw_path_7)
+raw_reads_pre_7 <- read_xlsx(raw_path_7, sheet = ex_sheets_7[2])
+raw_reads_time_course_7 <- read_xlsx(raw_path_7, sheet = ex_sheets_7[1])
+
+raw_path_post_7 <- "./data/H2DCFDA_TIP2-3_mutants_20230421_1.xlsx"
+ex_sheets_post_7 <- excel_sheets(raw_path_post_7)
+raw_reads_post_7 <- read_xlsx(raw_path_post_7, sheet = ex_sheets_post_7[1])
+
+raw_pre_7 <- raw_reads_pre_7[44:123,1:3]
+raw_time_course_7 <- raw_reads_time_course_7[44:123,1:3]
+raw_post_7 <- raw_reads_post_7[44:123,1:3]
+```
+
+
+Clean the data
+Check the formatting is correct, column labels
+```{r}
+clean_the_data_7 <- function(raw_tc,raw_pre,raw_post) {
+  
+  
+  colnames(raw_tc) <- c("sample_id", 1:(length(raw_tc[1,])-1) )
+
+  raw_tc$sample_id %>% as.factor()
+
+  colnames(raw_pre) <- c("sample_id", "pre_1", "pre_2") 
+ 
+  colnames(raw_post) <- c("sample_id", ">60_1", ">60_2")
+ 
+  raw_tc <- full_join(raw_pre, raw_tc, by = "sample_id")
+ 
+  all_tc <- full_join(raw_tc, raw_post, by = "sample_id")
+ 
+  all_tc[-1] <- mutate_if(all_tc[-1], is.character, as.numeric)
+  all_tc <- as.data.frame(all_tc, row.names = all_tc[1])
+  
+  
+  return(all_tc)
+}
+
+
+data_7 <- clean_the_data_7(raw_time_course_7, raw_pre_7, raw_post_7)
+```
+
+## ## Calculate the averages for each genotype
+Standardise to average of each genotype without H2O2 added
+Create data frame with genotypes as column names and time as rows
+Add column for time
+```{r}
+av_geno_7 <- data.frame(EMPTY_527  = fun_av_geno(data_7[6:10,]) - fun_av_geno(data_7[1:5,]), 
+                        TIP2_3 = fun_av_geno(data_7[16:20,]) - fun_av_geno(data_7[11:15,]),
+                        S8_MIMIC = fun_av_geno(data_7[26:30,]) - fun_av_geno(data_7[21:25,]),
+                        S8_NULL = fun_av_geno(data_7[36:40,]) - fun_av_geno(data_7[31:35,]),
+                        S127_MIMIC = fun_av_geno(data_7[46:50,]) - fun_av_geno(data_7[41:45,]),
+                        S127_NULL = fun_av_geno(data_7[56:60,]) - fun_av_geno(data_7[51:55,]), 
+                        S8_S127_MIMIC = fun_av_geno(data_7[66:70,]) - fun_av_geno(data_7[61:65,]),
+                        S8_S127_NULL = fun_av_geno(data_7[76:80,]) - fun_av_geno(data_7[71:75,]))
+
+time_7 <- c(0, 0 , "pre_1", "pre_2", ">60_1", ">60_2")
+av_geno_7 <- av_geno_7 %>% 
+  cbind(as.factor(time_7)) %>%
+  as.data.frame()
+```
+
+
+## Restructure data into tidy data
+1 column for time_2
+1 column for genotype
+1 column for intensity
+```{r}
+av_geno_7_long <- av_geno_7 %>%
+  filter(time_7 != "pre_1" | time_7 != "pre_2") %>%
+  pivot_longer(cols = 1:8, 
+               names_to = "genotype",
+               values_to = "intensity")
+
+glimpse(av_geno_7_long)
+```
+## Exploratory plot of data
+Look at intensity of genotypes over time, fit a line
+```{r}
+
+```
+
+## Fit a model to the data
+from the fit of the model, see *** no indication that there is an interaction between time_2 and genotypes
+```{r}
+lm7 <- aov(intensity ~ time_7 * genotype, av_geno_7_long)
+summary(lm7)
+```
